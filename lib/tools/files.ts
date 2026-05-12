@@ -37,7 +37,7 @@ function autoFixImports(content: string): string {
     .replace(/import\s+(['\"])\.\/src\//g, "import $1../src/");
 }
 
-export async function writeScratch(relPath: string, content: string): Promise<{ path: string; bytes: number }> {
+export async function writeScratch(relPath: string, content: string): Promise<{ path: string; bytes: number; runHint?: string }> {
   await fs.mkdir(scratchRoot(), { recursive: true });
   const safeName = relPath.replace(/^[/\\]+/, '').replace(/\.\./g, '_');
   const abs = insideRoot(scratchRoot(), safeName);
