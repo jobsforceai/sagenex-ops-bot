@@ -49,7 +49,7 @@ export async function runBash(command: string): Promise<BashResult> {
   const started = Date.now();
   return new Promise<BashResult>((resolve) => {
     const child = spawn('/bin/sh', ['-c', command], {
-      cwd, env: { ...process.env, PATH: '/usr/local/bin:/usr/bin:/bin' }, timeout: TIMEOUT_MS,
+      cwd, env: { ...process.env, PATH: process.env.PATH || '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' }, timeout: TIMEOUT_MS,
     });
     let stdout = '', stderr = '', truncated = false;
     child.stdout.on('data', (b: Buffer) => {
@@ -61,7 +61,14 @@ export async function runBash(command: string): Promise<BashResult> {
       stderr += b.toString('utf8'); if (stderr.length > MAX_OUTPUT) { stderr = stderr.slice(0, MAX_OUTPUT); truncated = true; }
     });
     child.on('close', (code) => {
-      resolve({ stdout, stderr, exitCode: code ?? -1, truncated, durationMs: Date.now() - started });
+      // Strip noisy lines so the model sees the real error, not 5 lines of
+      // "npm warn Unknown env config ..." before the truncation cutoff.
+      const cleanStderr = stderr
+        .split('\n')
+        .filter(l => !/^npm warn/i.test(l))
+        .join('\n')
+        .trim();
+      resolve({ stdout, stderr: cleanStderr, exitCode: code ?? -1, truncated, durationMs: Date.now() - started });
     });
     child.on('error', (err) => {
       resolve({ stdout, stderr: String(err), exitCode: -1, truncated, durationMs: Date.now() - started });

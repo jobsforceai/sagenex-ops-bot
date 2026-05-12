@@ -15,6 +15,28 @@ const MAX_ROWS = 200;
 const MAX_BYTES = 200_000;
 const FORBIDDEN_STAGES = new Set(['$out', '$merge']);
 
+// Walk a query/projection/pipeline doc and coerce values that LOOK like ISO
+// dates (e.g. "2025-11-30T00:00:00.000Z" or {"$date":"..."}) into Date objects
+// so Mongo comparisons against Date fields actually match. Also handles
+// {"$oid":"..."} for ObjectId.
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z?$/;
+const coerce = (v: any): any => {
+  if (v === null || v === undefined) return v;
+  if (typeof v === 'string' && ISO_DATE_RE.test(v)) return new Date(v);
+  if (Array.isArray(v)) return v.map(coerce);
+  if (typeof v === 'object') {
+    if ('$date' in v && typeof v['$date'] === 'string') return new Date(v['$date']);
+    if ('$oid' in v && typeof v['$oid'] === 'string') {
+      const { ObjectId } = require('mongodb');
+      return new ObjectId(v['$oid']);
+    }
+    const out: any = {};
+    for (const k of Object.keys(v)) out[k] = coerce(v[k]);
+    return out;
+  }
+  return v;
+};
+
 const trimResults = (rows: any[]) => {
   let bytes = 0;
   const out: any[] = [];
@@ -58,8 +80,8 @@ export async function mongoFind(args: {
   const limit = Math.min(args.limit ?? 50, MAX_ROWS);
   const rows = await db
     .collection(args.collection)
-    .find(args.filter ?? {}, { projection: args.projection })
-    .sort(args.sort ?? {})
+    .find(coerce(args.filter ?? {}), { projection: args.projection })
+    .sort(coerce(args.sort ?? {}))
     .skip(args.skip ?? 0)
     .limit(limit)
     .toArray();
@@ -76,19 +98,19 @@ export async function mongoAggregate(args: {
   const limit = Math.min(args.limit ?? 50, MAX_ROWS);
   const rows = await db
     .collection(args.collection)
-    .aggregate([...args.pipeline, { $limit: limit }])
+    .aggregate([...coerce(args.pipeline), { $limit: limit }])
     .toArray();
   return { count: rows.length, rows: trimResults(rows) };
 }
 
 export async function mongoCount(args: { collection: string; filter?: any }) {
   const db = await getMongoDb();
-  const n = await db.collection(args.collection).countDocuments(args.filter ?? {});
+  const n = await db.collection(args.collection).countDocuments(coerce(args.filter ?? {}));
   return { count: n };
 }
 
 export async function mongoDistinct(args: { collection: string; field: string; filter?: any }) {
   const db = await getMongoDb();
-  const vals = await db.collection(args.collection).distinct(args.field, args.filter ?? {});
+  const vals = await db.collection(args.collection).distinct(args.field, coerce(args.filter ?? {}));
   return { count: vals.length, values: vals.slice(0, MAX_ROWS) };
 }

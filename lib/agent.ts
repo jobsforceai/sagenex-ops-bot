@@ -94,10 +94,19 @@ const tools: FunctionDeclaration[] = [
   },
 ];
 
-const parseJson = (s: any) => {
-  if (s == null || s === '') return undefined;
-  if (typeof s !== 'string') return s;
-  try { return JSON.parse(s); } catch (e: any) { throw new Error(`Invalid JSON arg: ${e.message}`); }
+const parseJson = (input: any) => {
+  if (input == null || input === '') return undefined;
+  if (typeof input !== 'string') return input;
+  // First try strict JSON.
+  try { return JSON.parse(input); } catch {}
+  // Forgiving pass: single quotes → double, strip trailing commas before ] or }.
+  const relaxed = input
+    .replace(/(['\"])(?:(?=(\\?))\2.)*?\1/g, (m) => (m.startsWith("'") ? '"' + m.slice(1, -1).replace(/"/g, '\\"') + '"' : m))
+    .replace(/,\s*([}\]])/g, '$1');
+  try { return JSON.parse(relaxed); } catch (e: any) {
+    const around = input.length > 80 ? input.slice(0, 80) + '…' : input;
+    throw new Error(`Invalid JSON: ${e.message}. Got: ${around}`);
+  }
 };
 
 // ─── tool dispatcher ────────────────────────────────────────────────────
@@ -144,14 +153,43 @@ export async function* runAgent(history: ChatTurn[], userMessage: string): Async
     systemInstruction: SYSTEM_PROMPT,
     tools: [{ functionDeclarations: tools }],
     toolConfig: { functionCallingConfig: { mode: FunctionCallingMode.AUTO } },
+    generationConfig: { temperature: 0.2 },
   });
 
   const contents: Content[] = [];
   for (const turn of history) contents.push({ role: turn.role, parts: [{ text: turn.content }] });
   contents.push({ role: 'user', parts: [{ text: userMessage }] });
 
+  let nudgedOnce = false;
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
-    const result = await model.generateContent({ contents });
+    let result;
+    try {
+      result = await model.generateContent({ contents });
+    } catch (e: any) {
+      const msg = e?.message || String(e);
+      const overloaded = /503|UNAVAILABLE|overload|high demand|quota/i.test(msg);
+      if (overloaded) {
+        // Try once more with the lightest tier — keep the session alive.
+        try {
+          const fallback = genAI.getGenerativeModel({
+            model: 'gemini-2.0-flash',
+            systemInstruction: SYSTEM_PROMPT,
+            tools: [{ functionDeclarations: tools }],
+            toolConfig: { functionCallingConfig: { mode: FunctionCallingMode.AUTO } },
+            generationConfig: { temperature: 0.2 },
+          });
+          result = await fallback.generateContent({ contents });
+        } catch (e2: any) {
+          yield { type: 'text', text: `(Gemini is throttling — both ${MODEL} and the fallback failed. Try again in a few seconds.)` };
+          yield { type: 'done' };
+          return;
+        }
+      } else {
+        yield { type: 'text', text: `ERROR: ${msg}` };
+        yield { type: 'done' };
+        return;
+      }
+    }
     const response = result.response;
     const cand = response.candidates?.[0];
     if (!cand) { yield { type: 'text', text: '(no candidate returned)' }; break; }
@@ -161,8 +199,36 @@ export async function* runAgent(history: ChatTurn[], userMessage: string): Async
 
     const fnCalls = parts.filter((p: any) => p.functionCall);
     if (fnCalls.length === 0) {
-      const text = parts.map((p: any) => p.text || '').join('');
-      if (text) yield { type: 'text', text };
+      const text = parts.map((p: any) => p.text || '').join('').trim();
+      const isPermissionAsk = /would you like|shall i|should i (?:proceed|continue|run)|do you want me|let me know if you want|may i (?:proceed|continue)|here'?s the plan|here is the plan|i will (?:write|run|execute|now)|let me write|i'?ll (?:write|run|execute|now)|^plan:/i.test(text);
+      if (text && !isPermissionAsk) {
+        yield { type: 'text', text };
+        yield { type: 'done' };
+        return;
+      }
+      // Either empty response OR asking for permission — nudge it once.
+      if (!nudgedOnce) {
+        nudgedOnce = true;
+        contents.push({
+          role: 'user',
+          parts: [{ text: text
+            ? 'STOP narrating. Issue the function call NOW. Do not write any more text until you have the actual results from the tools. Just call write_scratch followed by bash. No more explanation, no more planning — execute.'
+            : 'Please produce your final answer for the user now using the data you have already gathered.' }],
+        });
+        continue;
+      }
+      // Model returned nothing — nudge it once for a final answer. If it still
+      // produces nothing, surface a clear "model stopped silently" message so
+      // the admin knows what happened.
+      if (!nudgedOnce) {
+        nudgedOnce = true;
+        contents.push({
+          role: 'user',
+          parts: [{ text: 'Please write your final answer for the user now in plain English, using the data you have already gathered. Do not call more tools unless absolutely necessary.' }],
+        });
+        continue;
+      }
+      yield { type: 'text', text: '(model stopped without producing a final answer — try rephrasing or ask again)' };
       yield { type: 'done' };
       return;
     }

@@ -12,10 +12,14 @@
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
+    "date-fns": "^4.1.0",
     "mongodb": "^6.20.0",
+    "mongoose": "^9.6.2",
     "next": "^15.0.3",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",

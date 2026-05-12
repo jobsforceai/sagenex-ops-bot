@@ -10,7 +10,7 @@ import fs from 'fs/promises';
 import path from 'path';
 
 const repoRoot = () => path.resolve(process.env.REPO_ROOT || './repos');
-const scratchRoot = () => path.resolve(repoRoot(), 'scratch');
+const scratchRoot = () => path.resolve(repoRoot(), 'repos', 'sagenex-backend', 'scratch');
 
 const insideRoot = (root: string, p: string) => {
   const abs = path.resolve(root, p);

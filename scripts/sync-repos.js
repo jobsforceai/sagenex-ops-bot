@@ -1,37 +1,33 @@
 #!/usr/bin/env node
-/**
- * Pulls master of all three Sagenex repos into REPO_ROOT/repos/*, refreshes
- * them to be read-only (chmod -R a-w), and ensures REPO_ROOT/scratch/ exists
- * and is writable. Idempotent.
- *
- * Run by hand or hook to a cron: `node scripts/sync-repos.js`.
- */
 const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
 const REPOS = [
-  { name: 'sagenex-backend',  src: '/Users/abhinayreddy/Desktop/sagenex-all/sgx/sagenex-backend' },
-  { name: 'sagenex-frontend', src: '/Users/abhinayreddy/Desktop/sagenex-all/sgx/sagenex-frontend' },
-  { name: 'sagenex-user',     src: '/Users/abhinayreddy/Desktop/sagenex-all/sgx/sagenex-user' },
+  { name: 'sagenex-backend',  src: '/Users/abhinayreddy/Desktop/sagenex-all/sgx/sagenex-backend',  withNodeModules: true  },
+  { name: 'sagenex-frontend', src: '/Users/abhinayreddy/Desktop/sagenex-all/sgx/sagenex-frontend', withNodeModules: false },
+  { name: 'sagenex-user',     src: '/Users/abhinayreddy/Desktop/sagenex-all/sgx/sagenex-user',     withNodeModules: false },
 ];
 
 const root = path.resolve(process.env.REPO_ROOT || path.join(__dirname, '..', 'repos'));
-fs.mkdirSync(root, { recursive: true });
-fs.mkdirSync(path.join(root, '..', 'scratch'), { recursive: true });
+const repoRoot = path.basename(root) === 'sagenex-ops-bot' ? path.join(root, 'repos') : root;
+fs.mkdirSync(repoRoot, { recursive: true });
+fs.mkdirSync(path.join(path.dirname(repoRoot), 'scratch'), { recursive: true });
 
 for (const r of REPOS) {
-  const dst = path.join(root, r.name);
-  console.log(`Syncing ${r.name}…`);
-  // Use rsync to mirror (excluding node_modules, .next, .git is small enough to include).
+  const dst = path.join(repoRoot, r.name);
+  console.log('Syncing ' + r.name + ' (node_modules: ' + r.withNodeModules + ')...');
   try {
-    // ensure writable before re-sync
-    execSync(`chmod -R u+w "${dst}" 2>/dev/null || true`);
-    execSync(`rsync -a --delete --exclude node_modules --exclude .next --exclude dist "${r.src}/" "${dst}/"`, { stdio: 'inherit' });
-    execSync(`chmod -R a-w "${dst}"`);
-    console.log(`  → ${dst} (read-only)`);
+    execSync('chmod -R u+w "' + dst + '" 2>/dev/null || true');
+    // 1. Source-only sync (always, read-only after).
+    execSync('rsync -a --delete --exclude node_modules --exclude .next --exclude dist "' + r.src + '/" "' + dst + '/"', { stdio: 'inherit' });
+    // 2. For backend, also pull node_modules with -L so pnpm symlinks become real files. Keep writable for ts-node cache.
+    if (r.withNodeModules) {
+      execSync('rsync -aL --delete "' + r.src + '/node_modules/" "' + path.join(dst, 'node_modules') + '/"', { stdio: 'inherit' });
+    }
+    console.log('  -> ' + dst);
   } catch (e) {
-    console.error(`  failed: ${e.message}`);
+    console.error('  failed: ' + e.message);
   }
 }
 console.log('Done.');
