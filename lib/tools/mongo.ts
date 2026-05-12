@@ -81,6 +81,7 @@ export async function mongoFind(args: {
   const rows = await db
     .collection(args.collection)
     .find(coerce(args.filter ?? {}), { projection: args.projection })
+    .maxTimeMS(25_000)
     .sort(coerce(args.sort ?? {}))
     .skip(args.skip ?? 0)
     .limit(limit)
@@ -98,7 +99,7 @@ export async function mongoAggregate(args: {
   const limit = Math.min(args.limit ?? 50, MAX_ROWS);
   const rows = await db
     .collection(args.collection)
-    .aggregate([...coerce(args.pipeline), { $limit: limit }])
+    .aggregate([...coerce(args.pipeline), { $limit: limit }], { maxTimeMS: 25_000, allowDiskUse: true })
     .toArray();
   return { count: rows.length, rows: trimResults(rows) };
 }

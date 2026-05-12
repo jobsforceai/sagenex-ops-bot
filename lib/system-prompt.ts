@@ -234,6 +234,16 @@ Only fall back to write_scratch + ts-node when:
     multiple round trips per user, complex filtering)
   • or you need to reuse a Mongoose model method (rare)
 
+──────── DO NOT DO N+1 LOOPS OVER USERS ────────────────────────────────
+
+If you find yourself writing 'for (const user of users) { await ... }'
+with TWO awaits inside (one for downline, one for ledger), STOP. That is
+O(900 × 2) = 1800 round-trips and will be killed by the 30s timeout.
+
+Use ONE aggregation pipeline that joins everything together — see the
+$graphLookup + $lookup pattern below. That runs in a single round-trip
+server-side and finishes in 1-2 seconds.
+
 ──────── WORKED EXAMPLE: per-user downline aggregation ─────────────────
 
 For ANY question asking about per-user *downline* business in a window

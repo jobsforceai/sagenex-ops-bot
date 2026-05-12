@@ -5,3 +5,4 @@ node_modules
 repos/
 scratch/
 sessions.jsonl
+tsconfig.tsbuildinfo

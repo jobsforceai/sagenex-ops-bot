@@ -49,8 +49,15 @@ export async function runBash(command: string): Promise<BashResult> {
   const started = Date.now();
   return new Promise<BashResult>((resolve) => {
     const child = spawn('/bin/sh', ['-c', command], {
-      cwd, env: { ...process.env, PATH: process.env.PATH || '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' }, timeout: TIMEOUT_MS,
+      cwd, env: { ...process.env, PATH: process.env.PATH || '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' }, detached: true,
     });
+    let killedByTimeout = false;
+    const timer = setTimeout(() => {
+      killedByTimeout = true;
+      // Kill the whole process group so ts-node / child processes also die.
+      try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch {}
+      try { child.kill('SIGKILL'); } catch {}
+    }, TIMEOUT_MS);
     let stdout = '', stderr = '', truncated = false;
     child.stdout.on('data', (b: Buffer) => {
       if (stdout.length >= MAX_OUTPUT) { truncated = true; return; }
@@ -61,14 +68,19 @@ export async function runBash(command: string): Promise<BashResult> {
       stderr += b.toString('utf8'); if (stderr.length > MAX_OUTPUT) { stderr = stderr.slice(0, MAX_OUTPUT); truncated = true; }
     });
     child.on('close', (code) => {
-      // Strip noisy lines so the model sees the real error, not 5 lines of
-      // "npm warn Unknown env config ..." before the truncation cutoff.
-      const cleanStderr = stderr
-        .split('\n')
-        .filter(l => !/^npm warn/i.test(l))
-        .join('\n')
-        .trim();
-      resolve({ stdout, stderr: cleanStderr, exitCode: code ?? -1, truncated, durationMs: Date.now() - started });
+      clearTimeout(timer);
+      const lines = stderr.split('\n').filter(l => !/^npm warn/i.test(l));
+      // Extract TSError / "Cannot find module" / specific error markers and float to top.
+      const errorLines = lines.filter(l =>
+        /TSError|error TS\d+|Cannot find module|MODULE_NOT_FOUND|ReferenceError|SyntaxError|Error:|Unhandled|Unable to compile/i.test(l)
+      );
+      const cleanStderr = errorLines.length
+        ? ['===== ERROR SUMMARY =====', ...errorLines.slice(0, 10), '', '===== FULL STDERR =====', ...lines].join('\n').trim()
+        : lines.join('\n').trim();
+      const finalStderr = killedByTimeout
+        ? `[KILLED after ${TIMEOUT_MS / 1000}s timeout — the command exceeded the bash sandbox limit. If your script is N+1 over users, rewrite it as a SINGLE aggregation pipeline instead of a per-user loop.]\n${cleanStderr}`
+        : cleanStderr;
+      resolve({ stdout, stderr: finalStderr, exitCode: killedByTimeout ? 124 : (code ?? -1), truncated, durationMs: Date.now() - started });
     });
     child.on('error', (err) => {
       resolve({ stdout, stderr: String(err), exitCode: -1, truncated, durationMs: Date.now() - started });

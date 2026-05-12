@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: sagenex-ops-bot
+    env: node
+    plan: free
+    buildCommand: pnpm install && pnpm build
+    startCommand: pnpm start
+    autoDeploy: true
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: MONGO_URI
+        sync: false
+      - key: OPS_BOT_PASSWORD
+        sync: false
+      - key: REPO_ROOT
+        value: /opt/render/project/src

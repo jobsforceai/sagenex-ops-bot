@@ -28,14 +28,31 @@ export async function readFile(relPath: string): Promise<{ path: string; bytes: 
   return { path: relPath, bytes: buf.byteLength, content: buf.toString('utf8') };
 }
 
+function autoFixImports(content: string): string {
+  // auto-fix relative imports — scripts live in repos/sagenex-backend/scratch/
+  // so './src/...' should be '../src/...'. Apply unless already starts with '../'.
+  return content
+    .replace(/from\s+(['\"])\.\/src\//g, "from $1../src/")
+    .replace(/from\s+(['\"])\.\/dist\//g, "from $1../dist/")
+    .replace(/import\s+(['\"])\.\/src\//g, "import $1../src/");
+}
+
 export async function writeScratch(relPath: string, content: string): Promise<{ path: string; bytes: number }> {
   await fs.mkdir(scratchRoot(), { recursive: true });
   const safeName = relPath.replace(/^[/\\]+/, '').replace(/\.\./g, '_');
   const abs = insideRoot(scratchRoot(), safeName);
   if (!abs) throw new Error(`Scratch path escapes scratch root: ${relPath}`);
   await fs.mkdir(path.dirname(abs), { recursive: true });
-  await fs.writeFile(abs, content, 'utf8');
-  return { path: path.relative(repoRoot(), abs), bytes: Buffer.byteLength(content, 'utf8') };
+  await fs.writeFile(abs, autoFixImports(content), 'utf8');
+  // The script lives at repos/sagenex-backend/scratch/<file>. To execute it,
+  // the model should bash:  cd repos/sagenex-backend && npx ts-node scratch/<file>
+  // Returning explicit guidance so the model doesn't guess the wrong path.
+  const fileName = path.basename(abs);
+  return {
+    path: path.relative(repoRoot(), abs),
+    bytes: Buffer.byteLength(content, 'utf8'),
+    runHint: `To execute this script, call:  bash(\"cd repos/sagenex-backend && npx ts-node scratch/${fileName}\")`,
+  };
 }
 
 export async function listFiles(glob?: string): Promise<{ files: string[] }> {

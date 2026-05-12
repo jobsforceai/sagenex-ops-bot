@@ -5,10 +5,11 @@
   "scripts": {
     "dev": "next dev -p 3030",
     "build": "next build",
-    "start": "next start -p 3030",
+    "start": "next start -p ${PORT:-3030}",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "sync-repos": "node scripts/sync-repos.js"
+    "sync-repos": "node scripts/sync-repos.js",
+    "postinstall": "node scripts/sync-repos-ci.js || true"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
