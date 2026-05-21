@@ -13,6 +13,7 @@ import { SYSTEM_PROMPT } from './system-prompt';
 import * as mongoTool from './tools/mongo';
 import { runBash } from './tools/bash';
 import { readFile, writeScratch, listFiles } from './tools/files';
+import { teamBusiness } from './tools/team';
 
 const REGION = process.env.BEDROCK_REGION || 'ap-south-1';
 const MODEL = process.env.BEDROCK_MODEL_ID || 'apac.amazon.nova-pro-v1:0';
@@ -112,6 +113,22 @@ const tools: ToolSpec[] = [
     },
   },
   {
+    name: 'team_business',
+    description: 'Compute the team-business (sum of downline PACKAGE_ACTIVATION volume in INR) for a given user, optionally restricted to a date range. This is the deterministic, fast way to answer "what is the team business of UXXX". Prefer this over hand-written aggregations. Returns downline size, activation count, and the total ₹. startDate/endDate are ISO strings (e.g. "2026-05-12"). includeSelf defaults to false (counts only the downline).',
+    inputSchema: {
+      json: {
+        type: 'object',
+        properties: {
+          userId: { type: 'string' },
+          startDate: { type: 'string', description: 'ISO date — inclusive lower bound. Omit for lifetime.' },
+          endDate: { type: 'string', description: 'ISO date — exclusive upper bound. Omit for lifetime.' },
+          includeSelf: { type: 'boolean' },
+        },
+        required: ['userId'],
+      },
+    },
+  },
+  {
     name: 'bash',
     description: 'Run a read-only shell command inside REPO_ROOT. 30s timeout. Use for rg/grep/find/cat or `cd repos/sagenex-backend && npx ts-node ../../scratch/foo.ts`.',
     inputSchema: { json: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] } },
@@ -156,6 +173,7 @@ async function executeTool(name: string, args: any): Promise<any> {
     case 'read_file':       return await readFile(args.path);
     case 'list_files':      return await listFiles(args.glob);
     case 'write_scratch':   return await writeScratch(args.path, args.content);
+    case 'team_business':   return await teamBusiness(args);
     case 'bash':            return await runBash(args.command);
     default: throw new Error(`Unknown tool: ${name}`);
   }
@@ -168,7 +186,7 @@ export type AgentEvent =
   | { type: 'tool_result'; name: string; result: any; isError?: boolean }
   | { type: 'done' };
 
-const MAX_TOOL_ITERATIONS = 20;
+const MAX_TOOL_ITERATIONS = 10;
 
 // Bedrock Converse message shape — assistant uses "assistant", we map history "model" → "assistant".
 type ConverseMessage = {
@@ -284,11 +302,17 @@ export async function* runAgent(history: ChatTurn[], userMessage: string): Async
     }
     messages.push({ role: 'user', content: toolResultBlocks });
 
-    // Detect repeated identical calls — if last 3 fingerprints match, nudge the model.
-    if (recentToolFingerprints.length >= 3) {
-      const last = recentToolFingerprints[recentToolFingerprints.length - 1];
-      const same = recentToolFingerprints.slice(-3).every(f => f === last);
-      if (same) {
+    // Detect repeated calls — AAA (same 3 in a row) or ABAB (alternating loop).
+    if (recentToolFingerprints.length >= 4) {
+      const fps = recentToolFingerprints;
+      const last = fps[fps.length - 1];
+      const same3 = fps.slice(-3).every(f => f === last);
+      const abab =
+        fps.length >= 4 &&
+        fps[fps.length - 1] === fps[fps.length - 3] &&
+        fps[fps.length - 2] === fps[fps.length - 4] &&
+        fps[fps.length - 1] !== fps[fps.length - 2];
+      if (same3 || abab) {
         messages.push({
           role: 'user',
           content: [{ text: 'You have called the same tool with the same arguments three times in a row and it is not making progress. STOP repeating that call. Try a completely different approach — e.g., use `bash` with `rg` for content search, or call `mongo_list_collections` first to understand what is available. If you cannot find what was asked, just answer in plain English that you could not find it.' }],
