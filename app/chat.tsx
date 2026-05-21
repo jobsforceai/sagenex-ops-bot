@@ -127,7 +127,7 @@ export default function ChatShell() {
       <header className="flex items-center justify-between border-b border-neutral-800 pb-3">
         <div>
           <h1 className="text-lg font-bold">Sagenex Ops Bot</h1>
-          <p className="text-xs text-neutral-500">Read-only · Gemini-powered</p>
+          <p className="text-xs text-neutral-500">Read-only · Nova Pro (Bedrock)</p>
         </div>
         <button onClick={logout} className="text-xs text-neutral-400 hover:text-neutral-200">Sign out</button>
       </header>

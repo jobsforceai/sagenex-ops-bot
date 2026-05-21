@@ -121,8 +121,11 @@ const tools: ToolSpec[] = [
 const parseJson = (input: any) => {
   if (input == null || input === '') return undefined;
   if (typeof input !== 'string') return input;
-  try { return JSON.parse(input); } catch {}
-  const relaxed = input
+  // Nova quirk: it sometimes prefixes arrays with a stray leading comma like ",[{...}]".
+  // Strip leading whitespace + comma before the first JSON char.
+  let cleaned = input.replace(/^\s*,+\s*/, '');
+  try { return JSON.parse(cleaned); } catch {}
+  const relaxed = cleaned
     .replace(/(['\"])(?:(?=(\\?))\2.)*?\1/g, (m) => (m.startsWith("'") ? '"' + m.slice(1, -1).replace(/"/g, '\\"') + '"' : m))
     .replace(/,\s*([}\]])/g, '$1');
   try { return JSON.parse(relaxed); } catch (e: any) {
